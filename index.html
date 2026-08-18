@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 15px; background: #f4f4f9; color: #333; }
+    .container { max-width: 100%; margin: 0 auto; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h2 { text-align: center; color: #444; border-bottom: 2px solid #06C755; padding-bottom: 10px; font-size: 1.2rem; }
+    .form-group { margin-bottom: 15px; }
+    label { font-weight: bold; display: block; margin-bottom: 5px; font-size: 0.9rem;}
+    select, input[type="file"], input[type="text"], textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 16px; }
+    button.submit-btn { padding: 12px; background: #06C755; color: white; border: none; border-radius: 8px; width: 100%; font-weight: bold; font-size: 16px; margin-top: 10px; cursor: pointer; }
+    button.submit-btn:disabled { background-color: #cccccc; cursor: not-allowed; }
+    #loader { display: none; text-align: center; margin-top: 15px; color: #06C755; font-weight: bold;}
+    .hint-text { font-size: 0.8em; color: #718096; display: block; margin-top: 3px; }
+    .error-msg { color: #e53e3e; font-size: 0.85em; display: none; margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>インフラ点検エージェント</h2>
+    
+    <div class="form-group">
+      <label>📝 実施する業務（シート）を選択</label>
+      <span class="hint-text">※新規の場合は入力した名前でシートを作ります。<br>シートは共有フォルダーに追加されます。</span>
+      <select id="taskSelect" onchange="onTaskChange()">
+        <option value="">⏳ フォルダ内のシートを検索中...</option>
+      </select>
+    </div>
+
+    <!-- 新規作成エリア -->
+    <div id="newSheetArea" style="display:none; background:#e6f7ff; padding:15px; border-radius:8px; margin-bottom:15px;">
+      <h3 style="margin-top:0; color:#1890ff; font-size:1.1em;">➕ 新しい点検業務を作る</h3>
+      <div class="form-group">
+        <label>業務名（シート名）</label>
+        <input type="text" id="newTaskName" placeholder="例: トンネルひび割れ点検">
+      </div>
+      <div class="form-group">
+        <label>AIに抽出させる項目（カンマ区切り）</label>
+        <input type="text" id="newTaskFields" placeholder="例: 幅, 長さ, 漏水">
+        <span class="hint-text">※AIがこの項目をチャットで聞き出します</span>
+      </div>
+      <button class="submit-btn" style="background:#1890ff;" onclick="submitNewSheet()" id="btnCreateSheet">シートを作成する</button>
+    </div>
+
+    <!-- 通常入力エリア -->
+    <div id="inputArea" style="display:none;">
+      <div class="form-group">
+        <label>📍 場所 (GPS自動取得)</label>
+        <input type="text" id="location" placeholder="GPS情報取得中..." readonly>
+        <div id="gpsError" class="error-msg">※GPSが受信できません。手動で入力してください。</div>
+      </div>
+
+      <div class="form-group">
+        <label>📷 現地写真 (必須)</label>
+        <input type="file" id="imageFile" accept="image/*">
+        <span class="hint-text">※送信時に自動縮小されます</span>
+      </div>
+
+      <div class="form-group">
+        <label>📘 事前資料 (図面等 / MAX3つ)</label>
+        <input type="file" id="suppFiles" accept="image/*,application/pdf" multiple>
+        <span class="hint-text">※AIに前提を読み取らせるための資料</span>
+      </div>
+
+      <div class="form-group">
+        <label>特記事項・コメント (任意)</label>
+        <textarea id="comment" rows="3" placeholder="異常なし、〇〇の図面を参考に...など"></textarea>
+      </div>
+
+      <button id="submitBtn" class="submit-btn" onclick="submitForm()">データを送ってLINE対話開始</button>
+      <div id="loader">⏳ 送信中...完了するとLINEに結果が届きます。<br>この画面は自動で閉じます。</div>
+    </div>
+  </div>
+
+  <script>
+    let lineUserId = null;
+    
+    // ==========================================
+    // ▼ 初期設定 ▼
+    // ==========================================
+    const LIFF_ID = "2010927837-CjKJ1xYn"; 
+    // ★先ほどコピーしたGASのWebアプリURLをここに貼り付けてください
+    const GAS_WEB_APP_URL = "YOUR_GAS_WEB_APP_URL"; 
+
+    window.onload = async function() {
+      // LIFF初期化
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        if (liff.isLoggedIn()) {
+          // カプセル（iframe）の外に出たので、これで確実にIDが取得できます！
+          const profile = await liff.getProfile();
+          lineUserId = profile.userId;
+        } else {
+          liff.login();
+        }
+      } catch (e) {
+        console.error("LIFF初期化エラー:", e);
+      }
+
+      getGPS();
+      fetchTasks();
+    };
+
+    // ==========================================
+    // ▼ GASとの通信処理（fetch APIに移行） ▼
+    // ==========================================
+    
+    // 1. シート一覧の取得
+    async function fetchTasks() {
+      try {
+        const response = await fetch(GAS_WEB_APP_URL + "?action=getTasks");
+        const data = await response.json();
+        
+        const select = document.getElementById('taskSelect');
+        select.innerHTML = '<option value="">▼ 業務を選択してください</option>';
+        select.innerHTML += '<option value="NEW" style="font-weight:bold; color:#1890ff;">➕ 新規業務シートを作成する</option>';
+        
+        if(data && data.tasks) {
+          data.tasks.forEach(task => {
+            select.innerHTML += `<option value="${task.fileId}">${task.taskName}</option>`;
+          });
+        }
+      } catch (err) {
+        alert("シート一覧の取得に失敗しました: " + err.message);
+      }
+    }
+
+    // 2. 新規シートの作成
+    async function submitNewSheet() {
+      const name = document.getElementById('newTaskName').value;
+      const fields = document.getElementById('newTaskFields').value;
+      if (!name || !fields) { alert("業務名と項目を入力してください"); return; }
+      
+      const btn = document.getElementById('btnCreateSheet');
+      btn.disabled = true;
+      btn.innerText = "⏳ 作成中...";
+
+      try {
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // CORS回避テクニック
+          body: JSON.stringify({ action: "createSheet", taskName: name, fieldsStr: fields })
+        });
+        const res = await response.json();
+
+        if(res.success) {
+          const select = document.getElementById('taskSelect');
+          const option = document.createElement("option");
+          option.value = res.fileId;
+          option.text = res.taskName;
+          select.add(option, 2); 
+          select.value = res.fileId; 
+          onTaskChange(); 
+          
+          btn.innerText = "✅ 作成完了！引き続き報告を開始できます";
+          setTimeout(() => { btn.innerText = "シートを作成する"; }, 3000);
+        } else {
+          alert("エラー: " + res.error); 
+        }
+      } catch (err) {
+        alert("通信エラー: " + err.message);
+      }
+      btn.disabled = false;
+    }
+
+    // 3. データ送信（報告）
+    async function submitForm() {
+      if (!lineUserId) {
+        alert("エラー: LINE IDが取得できていません。通信環境を確認してください。");
+        return;
+      }
+
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      document.getElementById('loader').style.display = 'block';
+
+      const data = {
+        fileId: document.getElementById('taskSelect').value,
+        location: document.getElementById('location').value,
+        comment: document.getElementById('comment').value,
+        lineUserId: lineUserId, // 100%本物のID
+        imageBase64: null,
+        supplementaryFiles: []
+      };
+
+      const file = document.getElementById('imageFile').files[0];
+      if (file) {
+        try { data.imageBase64 = await processImage(file); } 
+        catch (e) {
+          data.imageBase64 = await new Promise((res) => {
+            const reader = new FileReader();
+            reader.onload = (ev) => res(ev.target.result.split(',')[1]);
+            reader.readAsDataURL(file);
+          });
+        }
+      }
+
+      try {
+        const response = await fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // CORS回避テクニック
+          body: JSON.stringify({ action: "submit", data: data })
+        });
+        const res = await response.json();
+
+        document.getElementById('loader').style.display = 'none';
+        
+        // カプセル外なので、これで100%確実に閉じます！
+        if (liff.isInClient()) {
+          liff.closeWindow();
+        } else {
+          showDoneScreen();
+        }
+
+      } catch (err) {
+        document.getElementById('loader').style.display = 'none';
+        btn.disabled = false;
+        alert('エラーが発生しました: ' + err.message);
+      }
+    }
+
+    // ==========================================
+    // ▼ UI・ユーティリティ機能 ▼
+    // ==========================================
+    function onTaskChange() {
+      const val = document.getElementById('taskSelect').value;
+      if (val === 'NEW') {
+        document.getElementById('newSheetArea').style.display = 'block';
+        document.getElementById('inputArea').style.display = 'none';
+      } else if (val) {
+        document.getElementById('newSheetArea').style.display = 'none';
+        document.getElementById('inputArea').style.display = 'block';
+      } else {
+        document.getElementById('newSheetArea').style.display = 'none';
+        document.getElementById('inputArea').style.display = 'none';
+      }
+    }
+
+    function getGPS() {
+      const locInput = document.getElementById('location');
+      const errDiv = document.getElementById('gpsError');
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          function(pos) { locInput.value = pos.coords.latitude + ", " + pos.coords.longitude; locInput.removeAttribute('readonly'); },
+          function(err) { locInput.removeAttribute('readonly'); errDiv.style.display = 'block'; },
+          { timeout: 8000 }
+        );
+      } else { locInput.removeAttribute('readonly'); errDiv.style.display = 'block'; }
+    }
+
+    async function processImage(file, maxSize = 1280, quality = 0.8) {
+      let img;
+      try { img = await createImageBitmap(file, { imageOrientation: 'from-image' }); } 
+      catch (e) {
+        img = await new Promise((res, rej) => {
+          const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file);
+        });
+      }
+      let w = img.width, h = img.height;
+      if (w >= h && w > maxSize) { h = Math.round(h * maxSize / w); w = maxSize; }
+      else if (h > w && h > maxSize) { w = Math.round(w * maxSize / h); h = maxSize; }
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      if (img.close) img.close();
+      return canvas.toDataURL('image/jpeg', quality).split(',')[1];
+    }
+
+    function showDoneScreen() {
+      const c = document.querySelector('.container');
+      if (!c) return;
+      c.innerHTML = '<h2>送信完了</h2><p style="text-align:center;line-height:1.7;color:#333;margin-top:20px;">✅ データを送信しました。<br>LINEのトークにAIからの返信が届きます。<br><br>左上の <b>×</b>（または戻る）でトーク画面に戻り、<br>続きはAIと対話してください。</p><button class="submit-btn" onclick="location.reload()" style="margin-top:30px;">続けて別の報告をする</button>';
+    }
+  </script>
+</body>
+</html>
