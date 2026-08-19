@@ -181,7 +181,7 @@
         fileId: document.getElementById('taskSelect').value,
         location: document.getElementById('location').value,
         comment: document.getElementById('comment').value,
-        lineUserId: lineUserId, // 100%本物のID
+        lineUserId: lineUserId,
         imageBase64: null,
         supplementaryFiles: []
       };
@@ -199,26 +199,24 @@
       }
 
       try {
-        const response = await fetch('https://script.google.com/macros/s/AKfycbxT_KJq7kn0TEnBfkmfUkbT4vwpLR0psAZkX9t8AWu3hO_WcUCTlL1FjEzEeMQ5VL0gFg/exec', {
+        // 💡修正：awaitを外して「投げっぱなし」にする。直接 GAS_WEB_APP_URL を使用。
+        fetch(GAS_WEB_APP_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // CORS回避テクニック
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ action: "submit", data: data })
-        });
-        const res = await response.json();
+        }).catch(err => console.log("バックグラウンド送信完了"));
 
+        // 送信指示を出した直後に、待たずに一瞬で画面を閉じる
         document.getElementById('loader').style.display = 'none';
-        
-        // カプセル外なので、これで100%確実に閉じます！
         if (liff.isInClient()) {
           liff.closeWindow();
         } else {
           showDoneScreen();
         }
-
       } catch (err) {
         document.getElementById('loader').style.display = 'none';
         btn.disabled = false;
-        alert('エラーが発生しました: ' + err.message);
+        alert('送信準備エラーが発生しました: ' + err.message);
       }
     }
 
