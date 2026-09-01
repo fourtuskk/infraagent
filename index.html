@@ -69,7 +69,7 @@
         <label>特記事項・コメント (任意)</label>
         <textarea id="comment" rows="3" placeholder="異常なし、〇〇の図面を参考に...など"></textarea>
       </div>
-      
+
       <div class="form-group">
       <label>🤖 AIへの特別指示・相談（任意）</label>
       <span class="hint-text" style="display:block; margin-bottom:8px; line-height:1.4;">
@@ -190,6 +190,7 @@
         fileId: document.getElementById('taskSelect').value,
         location: document.getElementById('location').value,
         comment: document.getElementById('comment').value,
+        aiPrompt: document.getElementById('aiPrompt').value, // ★プロンプト追加に伴う追加
         lineUserId: lineUserId,
         imageBase64: null,
         supplementaryFiles: []
