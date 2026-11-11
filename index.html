@@ -40,6 +40,7 @@
       <div style="margin-top:8px;">
         <label class="choice"><input type="radio" name="mode" value="append" checked onchange="onModeChange()">この報告に追加する</label>
         <label class="choice"><input type="radio" name="mode" value="new" onchange="onModeChange()">新しい報告を始める<small>※進行中の報告は「中断」になります</small></label>
+        <div id="newModeNote" style="display:none; color:#c05621; font-size:0.85em; margin-top:4px;"></div>
       </div>
     </div>
 
@@ -49,7 +50,7 @@
     <div id="taskArea" class="form-group" style="display:none;">
       <label>📝 実施する業務（シート）を選択</label>
       <span class="hint-text">※新規の場合は入力した名前でシートを作ります。<br>シートは共有フォルダーに追加されます。</span>
-      <select id="taskSelect" onchange="onTaskChange()">
+      <select id="taskSelect" onchange="taskTouched = true; onTaskChange()">
         <option value="">⏳ フォルダ内のシートを検索中...</option>
       </select>
     </div>
@@ -120,6 +121,7 @@
     let chatType = null;      // utou / group / room / external など
     let chatGroupId = null;   // グループ案内リンクの ?g= から取得
     let activeReport = null;  // 進行中の報告（無ければ null）
+    let taskTouched = false;  // 業務を手動で選び直したか
 
     // ==========================================
     // ▼ 初期設定 ▼
@@ -154,17 +156,10 @@
 
       getGPS();
 
-      // ★前回の「進行中の報告」があれば即表示（業務選択を出さない）
-      const cached = loadActiveCache();
-      if (cached) { activeReport = cached; renderActive(); showMain(); }
-
-      fetchTasks();  // 業務一覧は裏で取得（新しい報告を始める時だけ使う）
-
-      // 最新の状態をGASに確認し、変わっていれば表示を更新
-      const before = JSON.stringify(activeKey(activeReport));
-      await fetchActive();
-      if (!cached || JSON.stringify(activeKey(activeReport)) !== before) showMain();
-      else renderActive();
+      clearOldCache();
+      fetchTasks();          // 業務一覧は裏で取得（新しい報告を始める時だけ使う）
+      await fetchActive();   // 進行中の報告は毎回GASに確認（端末には保存しない）
+      showMain();
     };
 
     function showMain() {
@@ -173,14 +168,11 @@
       onModeChange();
     }
 
-    // ---- 進行中の報告のキャッシュ（端末内） ----
-    function cacheKey() { return "activeReport:" + (chatGroupId || lineUserId || ""); }
-    function activeKey(a) { return a ? [a.fileId, a.row] : null; }
-    function loadActiveCache() {
-      try { const v = localStorage.getItem(cacheKey()); return v ? JSON.parse(v) : null; } catch (e) { return null; }
-    }
-    function saveActiveCache(a) {
-      try { a ? localStorage.setItem(cacheKey(), JSON.stringify(a)) : localStorage.removeItem(cacheKey()); } catch (e) {}
+    // 以前の版で端末に保存していた「進行中の報告」を削除
+    function clearOldCache() {
+      try {
+        Object.keys(localStorage).filter(k => k.indexOf("activeReport:") === 0).forEach(k => localStorage.removeItem(k));
+      } catch (e) {}
     }
 
     function getMode()   { const r = document.querySelector('input[name="mode"]:checked'); return (activeReport && r) ? r.value : 'new'; }
@@ -203,6 +195,7 @@
             select.innerHTML += `<option value="${task.fileId}">${task.taskName}</option>`;
           });
         }
+        if (getMode() === 'new') { preselectSameTask(); onTaskChange(); }
       } catch (err) {
         alert("シート一覧の取得に失敗しました: " + err.message);
       }
@@ -216,9 +209,10 @@
         const res = await fetch(GAS_WEB_APP_URL + "?" + q.toString());
         const data = await res.json();
         activeReport = data && data.active ? data.active : null;
-        saveActiveCache(activeReport);
       } catch (err) {
-        console.error("進行中の報告の取得に失敗:", err);  // 通信失敗時はキャッシュ表示のまま
+        console.error("進行中の報告の取得に失敗:", err);
+        activeReport = null;
+        alert("進行中の報告を確認できませんでした。通信環境を確認してください。");
       }
     }
 
@@ -228,7 +222,8 @@
         document.getElementById('activeInfo').innerHTML =
           `業務: <b>${escapeHtml(activeReport.taskName)}</b><br>` +
           `開始: ${escapeHtml(activeReport.date)}　写真: ${activeReport.photoCount}枚` +
-          (activeReport.reporter ? `<br>報告者: ${escapeHtml(activeReport.reporter)}` : "");
+          (activeReport.reporter === null || activeReport.reporter === undefined ? ""
+            : `<br>報告者: ${activeReport.reporter ? escapeHtml(activeReport.reporter) : '<span style="color:#a0aec0;">未入力</span>'}`);
         area.style.display = 'block';
       } else {
         area.style.display = 'none';
@@ -349,16 +344,6 @@
           body: JSON.stringify({ action: "submit", data: data })
         }).catch(err => console.log("バックグラウンド送信完了"));
 
-        if (action === 'finish') {
-          saveActiveCache(null);
-        } else if (mode === 'new') {
-          const sel = document.getElementById('taskSelect');
-          saveActiveCache({ fileId: fileId, taskName: sel.options[sel.selectedIndex].text, row: null,
-                            date: "（送信直後）", photoCount: file ? 1 : 0, reporter: "" });
-        } else if (file && activeReport) {
-          saveActiveCache(Object.assign({}, activeReport, { photoCount: (activeReport.photoCount || 0) + 1 }));
-        }
-
         document.getElementById('loader').style.display = 'none';
         if (liff.isInClient()) {
           liff.closeWindow();
@@ -378,6 +363,16 @@
     function onModeChange() {
       const mode = getMode();
       const finishChoice = document.getElementById('finishChoice');
+      const info = document.getElementById('activeInfo');
+      if (activeReport) info.style.display = (mode === 'append') ? 'block' : 'none';
+      // 新しい報告：進行中の報告の開始日時・報告者などは表示しない（中断の注意だけ）
+      const note = document.getElementById('newModeNote');
+      if (activeReport && mode === 'new') {
+        note.textContent = `⚠️ 進行中の報告「${activeReport.taskName}」は送信時に中断されます。`;
+        note.style.display = 'block';
+      } else {
+        note.style.display = 'none';
+      }
       if (mode === 'append') {
         document.getElementById('taskArea').style.display = 'none';
         document.getElementById('newSheetArea').style.display = 'none';
@@ -390,9 +385,17 @@
         document.getElementById('taskArea').style.display = 'block';
         finishChoice.classList.add('disabled');
         if (getAction() !== 'ai') document.querySelector('input[name="act"][value="ai"]').checked = true;
+        preselectSameTask();
         onTaskChange();
       }
       onActionChange();
+    }
+
+    // 新しい報告では、進行中の報告と同じ業務を初期選択（手動で選び直した場合はそのまま）
+    function preselectSameTask() {
+      if (!activeReport || taskTouched) return;
+      const select = document.getElementById('taskSelect');
+      if (Array.from(select.options).some(o => o.value === activeReport.fileId)) select.value = activeReport.fileId;
     }
 
     function onTaskChange() {
