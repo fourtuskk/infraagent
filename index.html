@@ -16,13 +16,35 @@
     #loader { display: none; text-align: center; margin-top: 15px; color: #06C755; font-weight: bold;}
     .hint-text { font-size: 0.8em; color: #718096; display: block; margin-top: 3px; }
     .error-msg { color: #e53e3e; font-size: 0.85em; display: none; margin-top: 5px; }
+    .banner { background:#f0fff4; border:1px solid #06C755; color:#22543d; padding:10px; border-radius:6px; margin-bottom:15px; font-size:0.85em; line-height:1.5; }
+    .active-box { background:#fffbea; border:1px solid #f6ad55; padding:12px; border-radius:8px; margin-bottom:15px; font-size:0.9em; line-height:1.6; }
+    .choice { display:block; border:1px solid #ddd; border-radius:6px; padding:10px; margin-bottom:6px; font-weight:normal; cursor:pointer; background:#fff; }
+    .choice input { margin-right:8px; transform: scale(1.2); }
+    .choice small { display:block; color:#718096; margin-left:26px; font-size:0.8em; }
+    .choice.disabled { opacity:0.4; pointer-events:none; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h2>インフラ点検エージェント</h2>
-    
-    <div class="form-group">
+    <h2>インフラAI点検エージェント</h2>
+
+    <div id="groupBanner" class="banner" style="display:none;">
+      👥 グループから起動しています。<br>
+      AIの返信は<b>このグループ</b>に届きます。グループの通常トーク・写真はAIに送られません。
+    </div>
+
+    <!-- 進行中の報告 -->
+    <div id="activeArea" class="active-box" style="display:none;">
+      <div>📌 <b>進行中の報告があります</b></div>
+      <div id="activeInfo"></div>
+      <div style="margin-top:8px;">
+        <label class="choice"><input type="radio" name="mode" value="append" checked onchange="onModeChange()">この報告に追加する</label>
+        <label class="choice"><input type="radio" name="mode" value="new" onchange="onModeChange()">新しい報告を始める<small>※進行中の報告は「中断」になります</small></label>
+      </div>
+    </div>
+
+    <!-- 業務選択（新しい報告のとき） -->
+    <div id="taskArea" class="form-group">
       <label>📝 実施する業務（シート）を選択</label>
       <span class="hint-text">※新規の場合は入力した名前でシートを作ります。<br>シートは共有フォルダーに追加されます。</span>
       <select id="taskSelect" onchange="onTaskChange()">
@@ -48,18 +70,25 @@
     <!-- 通常入力エリア -->
     <div id="inputArea" style="display:none;">
       <div class="form-group">
+        <label>⚙️ 送信のしかた</label>
+        <label class="choice"><input type="radio" name="act" value="ai" checked onchange="onActionChange()">🤖 AI判定して送信<small>写真をAIが解析し、所見と質問を返します</small></label>
+        <label class="choice" id="noaiChoice"><input type="radio" name="act" value="noai" onchange="onActionChange()">📷 AI判定なしで登録<small>写真を報告に追加するだけ。トークに登録通知が届きます</small></label>
+        <label class="choice" id="finishChoice"><input type="radio" name="act" value="finish" onchange="onActionChange()">✅ 項目を埋めて完了<small>これまでの写真・対話・グループのトークから項目を埋めてシートに書き込み、報告を終了します</small></label>
+      </div>
+
+      <div class="form-group">
         <label>📍 場所 (GPS自動取得)</label>
         <input type="text" id="location" placeholder="GPS情報取得中..." readonly>
         <div id="gpsError" class="error-msg">※GPSが受信できません。手動で入力してください。</div>
       </div>
 
       <div class="form-group">
-        <label>📷 現地写真 (必須)</label>
+        <label id="photoLabel">📷 現地写真 (必須)</label>
         <input type="file" id="imageFile" accept="image/*">
         <span class="hint-text">※送信時に自動縮小されます</span>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="suppGroup">
         <label>📘 事前資料 (図面等 / MAX3つ)</label>
         <input type="file" id="suppFiles" accept="image/*,application/pdf" multiple>
         <span class="hint-text">※AIに前提を読み取らせるための資料</span>
@@ -70,63 +99,77 @@
         <textarea id="comment" rows="3" placeholder="異常なし、〇〇の図面を参考に...など"></textarea>
       </div>
 
-      <div class="form-group">
-      <label>🤖 AIへの特別指示・相談（任意）</label>
-      <span class="hint-text" style="display:block; margin-bottom:8px; line-height:1.4;">
-        ※AIに分析やアドバイスを求めたい場合に入力してください。<br>
-        （例：クラックがある場合、推奨される補修工法をアドバイスして）
-      </span>
-      <textarea id="aiPrompt" rows="2" placeholder="AIに特別に指示したいことを入力..."></textarea>
-    </div>
+      <div class="form-group" id="aiPromptGroup">
+        <label>🤖 AIへの特別指示・相談（任意）</label>
+        <span class="hint-text" style="display:block; margin-bottom:8px; line-height:1.4;">
+          ※AIに分析やアドバイスを求めたい場合に入力してください。<br>
+          （例：クラックがある場合、推奨される補修工法をアドバイスして）
+        </span>
+        <textarea id="aiPrompt" rows="2" placeholder="AIに特別に指示したいことを入力..."></textarea>
+      </div>
 
-      <button id="submitBtn" class="submit-btn" onclick="submitForm()">データを送ってLINE対話開始</button>
+      <button id="submitBtn" class="submit-btn" onclick="submitForm()">AI判定して送信</button>
       <div id="loader">⏳ 送信中...完了するとLINEに結果が届きます。<br>この画面は自動で閉じます。</div>
     </div>
   </div>
 
   <script>
     let lineUserId = null;
-    
+    let chatType = null;      // utou / group / room / external など
+    let chatGroupId = null;   // グループ案内リンクの ?g= から取得
+    let activeReport = null;  // 進行中の報告（無ければ null）
+
     // ==========================================
     // ▼ 初期設定 ▼
     // ==========================================
-    const LIFF_ID = "2010927837-CjKJ1xYn"; 
-    // ★先ほどコピーしたGASのWebアプリURLをここに貼り付けてください
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxT_KJq7kn0TEnBfkmfUkbT4vwpLR0psAZkX9t8AWu3hO_WcUCTlL1FjEzEeMQ5VL0gFg/exec"; 
+    const LIFF_ID = "2010927837-CjKJ1xYn";
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxT_KJq7kn0TEnBfkmfUkbT4vwpLR0psAZkX9t8AWu3hO_WcUCTlL1FjEzEeMQ5VL0gFg/exec";
 
     window.onload = async function() {
-      // LIFF初期化
       try {
         await liff.init({ liffId: LIFF_ID });
         if (liff.isLoggedIn()) {
-          // カプセル（iframe）の外に出たので、これで確実にIDが取得できます！
           const profile = await liff.getProfile();
           lineUserId = profile.userId;
+
+          const ctx = liff.getContext();
+          if (ctx) {
+            chatType = ctx.type || null;
+            chatGroupId = ctx.groupId || ctx.roomId || null;
+          }
+          const g = new URLSearchParams(location.search).get('g');
+          if (g) chatGroupId = g;
+          if (chatGroupId || chatType === 'group' || chatType === 'room') {
+            document.getElementById('groupBanner').style.display = 'block';
+          }
         } else {
           liff.login();
+          return;
         }
       } catch (e) {
         console.error("LIFF初期化エラー:", e);
       }
 
       getGPS();
-      fetchTasks();
+      await Promise.all([fetchTasks(), fetchActive()]);
+      onModeChange();
     };
 
+    function getMode()   { const r = document.querySelector('input[name="mode"]:checked'); return (activeReport && r) ? r.value : 'new'; }
+    function getAction() { return document.querySelector('input[name="act"]:checked').value; }
+
     // ==========================================
-    // ▼ GASとの通信処理（fetch APIに移行） ▼
+    // ▼ GASとの通信処理 ▼
     // ==========================================
-    
-    // 1. シート一覧の取得
     async function fetchTasks() {
       try {
         const response = await fetch(GAS_WEB_APP_URL + "?action=getTasks");
         const data = await response.json();
-        
+
         const select = document.getElementById('taskSelect');
         select.innerHTML = '<option value="">▼ 業務を選択してください</option>';
         select.innerHTML += '<option value="NEW" style="font-weight:bold; color:#1890ff;">➕ 新規業務シートを作成する</option>';
-        
+
         if(data && data.tasks) {
           data.tasks.forEach(task => {
             select.innerHTML += `<option value="${task.fileId}">${task.taskName}</option>`;
@@ -137,12 +180,35 @@
       }
     }
 
-    // 2. 新規シートの作成
+    // 進行中の報告を取得（グループならグループ単位、1対1なら本人単位）
+    async function fetchActive() {
+      if (!lineUserId) return;
+      try {
+        const q = new URLSearchParams({ action: "getActive", u: lineUserId, g: chatGroupId || "", t: chatType || "" });
+        const res = await fetch(GAS_WEB_APP_URL + "?" + q.toString());
+        const data = await res.json();
+        activeReport = data && data.active ? data.active : null;
+      } catch (err) {
+        console.error("進行中の報告の取得に失敗:", err);
+        activeReport = null;
+      }
+      const area = document.getElementById('activeArea');
+      if (activeReport) {
+        document.getElementById('activeInfo').innerHTML =
+          `業務: <b>${escapeHtml(activeReport.taskName)}</b><br>` +
+          `開始: ${escapeHtml(activeReport.date)}　写真: ${activeReport.photoCount}枚` +
+          (activeReport.reporter ? `<br>報告者: ${escapeHtml(activeReport.reporter)}` : "");
+        area.style.display = 'block';
+      } else {
+        area.style.display = 'none';
+      }
+    }
+
     async function submitNewSheet() {
       const name = document.getElementById('newTaskName').value;
       const fields = document.getElementById('newTaskFields').value;
       if (!name || !fields) { alert("業務名と項目を入力してください"); return; }
-      
+
       const btn = document.getElementById('btnCreateSheet');
       btn.disabled = true;
       btn.innerText = "⏳ 作成中...";
@@ -150,7 +216,7 @@
       try {
         const response = await fetch(GAS_WEB_APP_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // CORS回避テクニック
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ action: "createSheet", taskName: name, fieldsStr: fields })
         });
         const res = await response.json();
@@ -160,14 +226,14 @@
           const option = document.createElement("option");
           option.value = res.fileId;
           option.text = res.taskName;
-          select.add(option, 2); 
-          select.value = res.fileId; 
-          onTaskChange(); 
-          
+          select.add(option, 2);
+          select.value = res.fileId;
+          onTaskChange();
+
           btn.innerText = "✅ 作成完了！引き続き報告を開始できます";
           setTimeout(() => { btn.innerText = "シートを作成する"; }, 3000);
         } else {
-          alert("エラー: " + res.error); 
+          alert("エラー: " + res.error);
         }
       } catch (err) {
         alert("通信エラー: " + err.message);
@@ -175,30 +241,41 @@
       btn.disabled = false;
     }
 
-    // 3. データ送信（報告）
     async function submitForm() {
       if (!lineUserId) {
         alert("エラー: LINE IDが取得できていません。通信環境を確認してください。");
         return;
       }
 
+      const mode = getMode();
+      const action = getAction();
+      const file = document.getElementById('imageFile').files[0];
+      const fileId = mode === 'append' ? activeReport.fileId : document.getElementById('taskSelect').value;
+
+      if (mode === 'new' && (!fileId || fileId === 'NEW')) { alert("業務を選択してください"); return; }
+      if (action !== 'finish' && !file) { alert("写真を選択してください"); return; }
+      if (action === 'finish' && !confirm("これまでの内容で項目を埋めてシートに書き込み、この報告を終了します。よろしいですか？")) return;
+
       const btn = document.getElementById('submitBtn');
       btn.disabled = true;
       document.getElementById('loader').style.display = 'block';
 
       const data = {
-        fileId: document.getElementById('taskSelect').value,
+        mode: mode,
+        action: action,
+        fileId: fileId,
         location: document.getElementById('location').value,
         comment: document.getElementById('comment').value,
-        aiPrompt: document.getElementById('aiPrompt').value, // ★プロンプト追加に伴う追加
+        aiPrompt: action === 'ai' ? document.getElementById('aiPrompt').value : "",
         lineUserId: lineUserId,
+        chatType: chatType,
+        groupId: chatGroupId,
         imageBase64: null,
         supplementaryFiles: []
       };
 
-      const file = document.getElementById('imageFile').files[0];
       if (file) {
-        try { data.imageBase64 = await processImage(file); } 
+        try { data.imageBase64 = await processImage(file); }
         catch (e) {
           data.imageBase64 = await new Promise((res) => {
             const reader = new FileReader();
@@ -208,20 +285,39 @@
         }
       }
 
+      // 事前資料（AI判定時のみ / MAX3）
+      if (action === 'ai') {
+        const suppList = Array.from(document.getElementById('suppFiles').files).slice(0, 3);
+        for (const f of suppList) {
+          try {
+            if (f.type.startsWith('image/')) {
+              data.supplementaryFiles.push({ base64: await processImage(f), mimeType: 'image/jpeg' });
+            } else {
+              const b64 = await new Promise((res, rej) => {
+                const r = new FileReader();
+                r.onload = (ev) => res(ev.target.result.split(',')[1]);
+                r.onerror = rej;
+                r.readAsDataURL(f);
+              });
+              data.supplementaryFiles.push({ base64: b64, mimeType: f.type || 'application/pdf' });
+            }
+          } catch (e) { console.error('事前資料の読込失敗:', f.name, e); }
+        }
+      }
+
       try {
-        // 💡修正：awaitを外して「投げっぱなし」にする。直接 GAS_WEB_APP_URL を使用。
+        // 投げっぱなし送信（結果はLINEのトークに届く）
         fetch(GAS_WEB_APP_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ action: "submit", data: data })
         }).catch(err => console.log("バックグラウンド送信完了"));
 
-        // 送信指示を出した直後に、待たずに一瞬で画面を閉じる
         document.getElementById('loader').style.display = 'none';
         if (liff.isInClient()) {
           liff.closeWindow();
         } else {
-          showDoneScreen();
+          showDoneScreen(action);
         }
       } catch (err) {
         document.getElementById('loader').style.display = 'none';
@@ -233,18 +329,40 @@
     // ==========================================
     // ▼ UI・ユーティリティ機能 ▼
     // ==========================================
-    function onTaskChange() {
-      const val = document.getElementById('taskSelect').value;
-      if (val === 'NEW') {
-        document.getElementById('newSheetArea').style.display = 'block';
-        document.getElementById('inputArea').style.display = 'none';
-      } else if (val) {
+    function onModeChange() {
+      const mode = getMode();
+      const finishChoice = document.getElementById('finishChoice');
+      if (mode === 'append') {
+        document.getElementById('taskArea').style.display = 'none';
         document.getElementById('newSheetArea').style.display = 'none';
         document.getElementById('inputArea').style.display = 'block';
+        finishChoice.classList.remove('disabled');
+        document.getElementById('noaiChoice').classList.remove('disabled');
       } else {
-        document.getElementById('newSheetArea').style.display = 'none';
-        document.getElementById('inputArea').style.display = 'none';
+        // 最初の報告は必ずAI判定
+        document.getElementById('noaiChoice').classList.add('disabled');
+        document.getElementById('taskArea').style.display = 'block';
+        finishChoice.classList.add('disabled');
+        if (getAction() !== 'ai') document.querySelector('input[name="act"][value="ai"]').checked = true;
+        onTaskChange();
       }
+      onActionChange();
+    }
+
+    function onTaskChange() {
+      if (getMode() === 'append') return;
+      const val = document.getElementById('taskSelect').value;
+      document.getElementById('newSheetArea').style.display = (val === 'NEW') ? 'block' : 'none';
+      document.getElementById('inputArea').style.display = (val && val !== 'NEW') ? 'block' : 'none';
+    }
+
+    function onActionChange() {
+      const act = getAction();
+      document.getElementById('aiPromptGroup').style.display = act === 'ai' ? 'block' : 'none';
+      document.getElementById('suppGroup').style.display = act === 'ai' ? 'block' : 'none';
+      document.getElementById('photoLabel').innerText = act === 'finish' ? '📷 現地写真 (任意)' : '📷 現地写真 (必須)';
+      const labels = { ai: 'AI判定して送信', noai: '写真を登録してトークに戻る', finish: '項目を埋めて完了する' };
+      document.getElementById('submitBtn').innerText = labels[act];
     }
 
     function getGPS() {
@@ -261,7 +379,7 @@
 
     async function processImage(file, maxSize = 1280, quality = 0.8) {
       let img;
-      try { img = await createImageBitmap(file, { imageOrientation: 'from-image' }); } 
+      try { img = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
       catch (e) {
         img = await new Promise((res, rej) => {
           const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file);
@@ -276,10 +394,19 @@
       return canvas.toDataURL('image/jpeg', quality).split(',')[1];
     }
 
-    function showDoneScreen() {
+    function escapeHtml(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+
+    function showDoneScreen(action) {
       const c = document.querySelector('.container');
       if (!c) return;
-      c.innerHTML = '<h2>送信完了</h2><p style="text-align:center;line-height:1.7;color:#333;margin-top:20px;">✅ データを送信しました。<br>LINEのトークにAIからの返信が届きます。<br><br>左上の <b>×</b>（または戻る）でトーク画面に戻り、<br>続きはAIと対話してください。</p><button class="submit-btn" onclick="location.reload()" style="margin-top:30px;">続けて別の報告をする</button>';
+      const msg = {
+        ai: 'AIの判定結果がLINEのトークに届きます。',
+        noai: '写真を登録しました。トークに登録通知が届きます。',
+        finish: 'AIが項目を埋めてシートに書き込みます。<br>完了通知がトークに届きます。'
+      }[action] || '';
+      c.innerHTML = `<h2>送信完了</h2><p style="text-align:center;line-height:1.7;color:#333;margin-top:20px;">✅ データを送信しました。<br>${msg}<br><br>左上の <b>×</b>（または戻る）でトーク画面に戻ってください。</p><button class="submit-btn" onclick="location.reload()" style="margin-top:30px;">続けて別の報告をする</button>`;
     }
   </script>
 </body>
