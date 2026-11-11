@@ -26,7 +26,7 @@
 </head>
 <body>
   <div class="container">
-    <h2>インフラAI点検エージェント</h2>
+    <h2>インフラ点検エージェント</h2>
 
     <div id="groupBanner" class="banner" style="display:none;">
       👥 グループから起動しています。<br>
@@ -44,7 +44,9 @@
     </div>
 
     <!-- 業務選択（新しい報告のとき） -->
-    <div id="taskArea" class="form-group">
+    <div id="bootLoader" style="text-align:center; color:#06C755; font-weight:bold; padding:20px 0;">⏳ 進行中の報告を確認中...</div>
+
+    <div id="taskArea" class="form-group" style="display:none;">
       <label>📝 実施する業務（シート）を選択</label>
       <span class="hint-text">※新規の場合は入力した名前でシートを作ります。<br>シートは共有フォルダーに追加されます。</span>
       <select id="taskSelect" onchange="onTaskChange()">
@@ -71,8 +73,8 @@
     <div id="inputArea" style="display:none;">
       <div class="form-group">
         <label>⚙️ 送信のしかた</label>
-        <label class="choice"><input type="radio" name="act" value="ai" checked onchange="onActionChange()">🤖 AI判定して送信<small>写真をAIが解析し、所見と質問を返します</small></label>
-        <label class="choice" id="noaiChoice"><input type="radio" name="act" value="noai" onchange="onActionChange()">📷 AI判定なしで登録<small>写真を報告に追加するだけ。トークに登録通知が届きます</small></label>
+        <label class="choice"><input type="radio" name="act" value="ai" checked onchange="onActionChange()">🤖 AIに送信<small>写真・特記事項・指示をAIに送り、所見や回答を返します</small></label>
+        <label class="choice" id="noaiChoice"><input type="radio" name="act" value="noai" onchange="onActionChange()">📷 AI判定なしで登録<small>写真・特記事項を報告に記録するだけ。トークに登録通知が届きます</small></label>
         <label class="choice" id="finishChoice"><input type="radio" name="act" value="finish" onchange="onActionChange()">✅ 項目を埋めて完了<small>これまでの写真・対話・グループのトークから項目を埋めてシートに書き込み、報告を終了します</small></label>
       </div>
 
@@ -85,7 +87,7 @@
       <div class="form-group">
         <label id="photoLabel">📷 現地写真 (必須)</label>
         <input type="file" id="imageFile" accept="image/*">
-        <span class="hint-text">※送信時に自動縮小されます</span>
+        <span class="hint-text" id="photoHint">※送信時に自動縮小されます</span>
       </div>
 
       <div class="form-group" id="suppGroup">
@@ -151,9 +153,35 @@
       }
 
       getGPS();
-      await Promise.all([fetchTasks(), fetchActive()]);
-      onModeChange();
+
+      // ★前回の「進行中の報告」があれば即表示（業務選択を出さない）
+      const cached = loadActiveCache();
+      if (cached) { activeReport = cached; renderActive(); showMain(); }
+
+      fetchTasks();  // 業務一覧は裏で取得（新しい報告を始める時だけ使う）
+
+      // 最新の状態をGASに確認し、変わっていれば表示を更新
+      const before = JSON.stringify(activeKey(activeReport));
+      await fetchActive();
+      if (!cached || JSON.stringify(activeKey(activeReport)) !== before) showMain();
+      else renderActive();
     };
+
+    function showMain() {
+      document.getElementById('bootLoader').style.display = 'none';
+      renderActive();
+      onModeChange();
+    }
+
+    // ---- 進行中の報告のキャッシュ（端末内） ----
+    function cacheKey() { return "activeReport:" + (chatGroupId || lineUserId || ""); }
+    function activeKey(a) { return a ? [a.fileId, a.row] : null; }
+    function loadActiveCache() {
+      try { const v = localStorage.getItem(cacheKey()); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+    }
+    function saveActiveCache(a) {
+      try { a ? localStorage.setItem(cacheKey(), JSON.stringify(a)) : localStorage.removeItem(cacheKey()); } catch (e) {}
+    }
 
     function getMode()   { const r = document.querySelector('input[name="mode"]:checked'); return (activeReport && r) ? r.value : 'new'; }
     function getAction() { return document.querySelector('input[name="act"]:checked').value; }
@@ -188,10 +216,13 @@
         const res = await fetch(GAS_WEB_APP_URL + "?" + q.toString());
         const data = await res.json();
         activeReport = data && data.active ? data.active : null;
+        saveActiveCache(activeReport);
       } catch (err) {
-        console.error("進行中の報告の取得に失敗:", err);
-        activeReport = null;
+        console.error("進行中の報告の取得に失敗:", err);  // 通信失敗時はキャッシュ表示のまま
       }
+    }
+
+    function renderActive() {
       const area = document.getElementById('activeArea');
       if (activeReport) {
         document.getElementById('activeInfo').innerHTML =
@@ -253,7 +284,12 @@
       const fileId = mode === 'append' ? activeReport.fileId : document.getElementById('taskSelect').value;
 
       if (mode === 'new' && (!fileId || fileId === 'NEW')) { alert("業務を選択してください"); return; }
-      if (action !== 'finish' && !file) { alert("写真を選択してください"); return; }
+      const commentText = document.getElementById('comment').value.trim();
+      const promptText = action === 'ai' ? document.getElementById('aiPrompt').value.trim() : "";
+      if (mode === 'new' && !file) { alert("最初の報告は写真が必須です"); return; }
+      if (mode === 'append' && action !== 'finish' && !file && !commentText && !promptText) {
+        alert("写真・特記事項・AIへの指示のいずれかを入力してください"); return;
+      }
       if (action === 'finish' && !confirm("これまでの内容で項目を埋めてシートに書き込み、この報告を終了します。よろしいですか？")) return;
 
       const btn = document.getElementById('submitBtn');
@@ -313,6 +349,16 @@
           body: JSON.stringify({ action: "submit", data: data })
         }).catch(err => console.log("バックグラウンド送信完了"));
 
+        if (action === 'finish') {
+          saveActiveCache(null);
+        } else if (mode === 'new') {
+          const sel = document.getElementById('taskSelect');
+          saveActiveCache({ fileId: fileId, taskName: sel.options[sel.selectedIndex].text, row: null,
+                            date: "（送信直後）", photoCount: file ? 1 : 0, reporter: "" });
+        } else if (file && activeReport) {
+          saveActiveCache(Object.assign({}, activeReport, { photoCount: (activeReport.photoCount || 0) + 1 }));
+        }
+
         document.getElementById('loader').style.display = 'none';
         if (liff.isInClient()) {
           liff.closeWindow();
@@ -360,8 +406,14 @@
       const act = getAction();
       document.getElementById('aiPromptGroup').style.display = act === 'ai' ? 'block' : 'none';
       document.getElementById('suppGroup').style.display = act === 'ai' ? 'block' : 'none';
-      document.getElementById('photoLabel').innerText = act === 'finish' ? '📷 現地写真 (任意)' : '📷 現地写真 (必須)';
-      const labels = { ai: 'AI判定して送信', noai: '写真を登録してトークに戻る', finish: '項目を埋めて完了する' };
+      const isAppend = getMode() === 'append';
+      document.getElementById('photoLabel').innerText = (isAppend || act === 'finish') ? '📷 現地写真 (任意)' : '📷 現地写真 (必須)';
+      document.getElementById('photoHint').innerText = (isAppend && act !== 'finish')
+        ? '※写真なしで特記事項・AIへの指示だけ送ることもできます'
+        : '※送信時に自動縮小されます';
+      const labels = isAppend
+        ? { ai: 'AIに送信', noai: '登録してトークに戻る', finish: '項目を埋めて完了する' }
+        : { ai: 'AI判定して送信', noai: '登録してトークに戻る', finish: '項目を埋めて完了する' };
       document.getElementById('submitBtn').innerText = labels[act];
     }
 
