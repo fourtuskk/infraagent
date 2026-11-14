@@ -87,8 +87,13 @@
 
       <div class="form-group">
         <label id="photoLabel">📷 現地写真 (必須)</label>
-        <input type="file" id="imageFile" accept="image/*">
+        <input type="file" id="imageFile" accept="image/*" onchange="onPhotoSelected()">
         <span class="hint-text" id="photoHint">※送信時に自動縮小されます</span>
+        <img id="photoPreview" alt="" style="display:none; max-width:100%; max-height:220px; margin-top:8px; border-radius:6px; border:1px solid #ddd;">
+        <label class="choice" id="shareChoice" style="display:none; margin-top:8px;">
+          <input type="checkbox" id="sharePhoto" checked>📤 この写真をグループにも表示する
+          <small>AIの結果を待たずに、写真がトークに投稿されます</small>
+        </label>
       </div>
 
       <div class="form-group" id="suppGroup">
@@ -118,6 +123,7 @@
 
   <script>
     let lineUserId = null;
+    let lineDisplayName = "";  // グループに写真を出すときの投稿者名
     let chatType = null;      // utou / group / room / external など
     let chatGroupId = null;   // グループ案内リンクの ?g= から取得
     let activeReport = null;  // 進行中の報告（無ければ null）
@@ -135,6 +141,7 @@
         if (liff.isLoggedIn()) {
           const profile = await liff.getProfile();
           lineUserId = profile.userId;
+          lineDisplayName = profile.displayName || "";
 
           const ctx = liff.getContext();
           if (ctx) {
@@ -299,6 +306,9 @@
         comment: document.getElementById('comment').value,
         aiPrompt: action === 'ai' ? document.getElementById('aiPrompt').value : "",
         lineUserId: lineUserId,
+        displayName: lineDisplayName,
+        // グループ起動時、写真をトークにも表示するか（GAS側で image メッセージをpush）
+        sharePhotoToGroup: !!(file && isGroupContext() && document.getElementById('sharePhoto').checked),
         chatType: chatType,
         groupId: chatGroupId,
         imageBase64: null,
@@ -418,6 +428,24 @@
         ? { ai: 'AIに送信', noai: '登録してトークに戻る', finish: '項目を埋めて完了する' }
         : { ai: 'AI判定して送信', noai: '登録してトークに戻る', finish: '項目を埋めて完了する' };
       document.getElementById('submitBtn').innerText = labels[act];
+    }
+
+    function isGroupContext() {
+      return !!(chatGroupId || chatType === 'group' || chatType === 'room');
+    }
+
+    // 写真を選んだらプレビュー表示＋（グループ起動時）共有チェックを出す
+    function onPhotoSelected() {
+      const file = document.getElementById('imageFile').files[0];
+      const img = document.getElementById('photoPreview');
+      if (img.dataset.url) { URL.revokeObjectURL(img.dataset.url); delete img.dataset.url; }
+      if (file) {
+        const url = URL.createObjectURL(file);
+        img.src = url; img.dataset.url = url; img.style.display = 'block';
+      } else {
+        img.removeAttribute('src'); img.style.display = 'none';
+      }
+      document.getElementById('shareChoice').style.display = (file && isGroupContext()) ? 'block' : 'none';
     }
 
     function getGPS() {
