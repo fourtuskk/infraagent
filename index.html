@@ -73,6 +73,12 @@
     <!-- 通常入力エリア -->
     <div id="inputArea" style="display:none;">
       <div class="form-group">
+        <label>👤 送信者（あなたの名前）</label>
+        <input type="text" id="reporterName" placeholder="例: 山田太郎">
+        <span class="hint-text" id="reporterHint">※初回だけ入力。次回からは自動で表示されます</span>
+      </div>
+
+      <div class="form-group">
         <label>⚙️ 送信のしかた</label>
         <label class="choice"><input type="radio" name="act" value="ai" checked onchange="onActionChange()">🤖 AIに送信<small>写真・特記事項・指示をAIに送り、所見や回答を返します</small></label>
         <label class="choice" id="noaiChoice"><input type="radio" name="act" value="noai" onchange="onActionChange()">📷 AI判定なしで登録<small>写真・特記事項を報告に記録するだけ。トークに登録通知が届きます</small></label>
@@ -216,6 +222,15 @@
         const res = await fetch(GAS_WEB_APP_URL + "?" + q.toString());
         const data = await res.json();
         activeReport = data && data.active ? data.active : null;
+        // 名簿に登録済みならその名前、無ければ空欄（LINEの表示名は候補としてplaceholderに出す）
+        const nameInput = document.getElementById('reporterName');
+        if (data && data.me) {
+          nameInput.value = data.me;
+        } else {
+          nameInput.value = "";
+          if (lineDisplayName) nameInput.placeholder = `例: ${lineDisplayName}（氏名を入力）`;
+          document.getElementById('reporterHint').innerText = "※名簿に未登録です。氏名を入力してください（次回から自動表示）";
+        }
       } catch (err) {
         console.error("進行中の報告の取得に失敗:", err);
         activeReport = null;
@@ -230,7 +245,7 @@
           `業務: <b>${escapeHtml(activeReport.taskName)}</b><br>` +
           `開始: ${escapeHtml(activeReport.date)}　写真: ${activeReport.photoCount}枚` +
           (activeReport.reporter === null || activeReport.reporter === undefined ? ""
-            : `<br>報告者: ${activeReport.reporter ? escapeHtml(activeReport.reporter) : '<span style="color:#a0aec0;">未入力</span>'}`);
+            : `<br>開始した人: ${activeReport.reporter ? escapeHtml(activeReport.reporter) : '<span style="color:#a0aec0;">未入力</span>'}`);
         area.style.display = 'block';
       } else {
         area.style.display = 'none';
@@ -286,6 +301,8 @@
       const fileId = mode === 'append' ? activeReport.fileId : document.getElementById('taskSelect').value;
 
       if (mode === 'new' && (!fileId || fileId === 'NEW')) { alert("業務を選択してください"); return; }
+      const reporterName = document.getElementById('reporterName').value.trim();
+      if (!reporterName) { alert("送信者（あなたの名前）を入力してください"); return; }
       const commentText = document.getElementById('comment').value.trim();
       const promptText = action === 'ai' ? document.getElementById('aiPrompt').value.trim() : "";
       if (mode === 'new' && !file) { alert("最初の報告は写真が必須です"); return; }
@@ -307,6 +324,7 @@
         aiPrompt: action === 'ai' ? document.getElementById('aiPrompt').value : "",
         lineUserId: lineUserId,
         displayName: lineDisplayName,
+        reporterName: reporterName,
         // グループ起動時、写真をトークにも表示するか（GAS側で image メッセージをpush）
         sharePhotoToGroup: !!(file && isGroupContext() && document.getElementById('sharePhoto').checked),
         chatType: chatType,
