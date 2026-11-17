@@ -372,7 +372,6 @@
         let savedName = "";
         try { savedName = localStorage.getItem("reporterName:" + lineUserId) || ""; } catch (e) {}
         nameInput.value = savedName;
-        if (!savedName && lineDisplayName) nameInput.placeholder = `例: ${lineDisplayName}（氏名を入力）`;
         document.getElementById('reporterHint').innerText = savedName
           ? "※この端末で前回入力した名前です。違う場合は書き換えてください"
           : "※氏名を入力してください（この端末では次回から自動で表示されます）";
