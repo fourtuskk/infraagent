@@ -25,8 +25,19 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2>ＡＩ点検エージェント</h2>
+  <!-- 写真ビューア（過去の事例・進行中の報告の写真を見る） -->
+  <div class="container" id="viewer" style="display:none;">
+    <h2 style="margin-top:0;">📷 報告の写真</h2>
+    <span class="hint-text" style="display:block; margin-bottom:10px;">写真をタップすると大きく表示します。必要な写真だけ「トークに送る」でグループに共有できます。</span>
+    <div id="viewerBody">⏳ 読み込み中...</div>
+    <button class="submit-btn" id="viewerBack" style="margin-top:16px; background:#718096;" onclick="closeViewer()">報告の画面へ</button>
+  </div>
+  <div id="photoZoom" onclick="this.style.display='none'" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.9); z-index:100; align-items:center; justify-content:center;">
+    <img id="photoZoomImg" alt="" style="max-width:100%; max-height:100%;">
+  </div>
+
+  <div class="container" id="mainContainer">
+    <h2>インフラＡＩ点検エージェント</h2>
 
     <div id="groupBanner" class="banner" style="display:none;">
       👥 グループから起動しています。<br>
@@ -117,9 +128,18 @@
         <label>🤖 AIへの特別指示・相談（任意）</label>
         <span class="hint-text" style="display:block; margin-bottom:8px; line-height:1.4;">
           ※AIに分析やアドバイスを求めたい場合に入力してください。<br>
-          （例：クラックがある場合、推奨される補修工法をアドバイスして）
+          （例：クラックがある場合、推奨される補修工法をアドバイスして）<br>
+          （例：過去の履歴からアドバイスして　← 過去の点検記録を調べて回答します）
         </span>
         <textarea id="aiPrompt" rows="2" placeholder="AIに特別に指示したいことを入力..."></textarea>
+
+        <div id="knowledgeBox" style="margin-top:10px; display:none;">
+          <label style="font-size:14px;">📚 参照するナレッジファイル（任意・複数可）</label>
+          <span class="hint-text" style="display:block; margin-bottom:6px;">
+            ※チェックしたファイルを根拠にAIが回答します。未選択でも、指示に「ナレッジ」と書くと全ファイルを参照します。
+          </span>
+          <div id="knowledgeList" style="max-height:180px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px; padding:6px 8px; background:#fff;"></div>
+        </div>
       </div>
 
       <button id="submitBtn" class="submit-btn" onclick="submitForm()">AI判定して送信</button>
@@ -167,10 +187,15 @@
         console.error("LIFF初期化エラー:", e);
       }
 
+      // ?v= 付きで開かれた時は写真ビューアを表示（フォームの準備は裏で進める）
+      const viewParam = new URLSearchParams(location.search).get('v');
+      if (viewParam && lineUserId) openViewer(viewParam);
+
       getGPS();
 
       clearOldCache();
       fetchTasks();          // 業務一覧は裏で取得（新しい報告を始める時だけ使う）
+      fetchKnowledge();      // ナレッジフォルダのファイル一覧も裏で取得
       await fetchActive();   // 進行中の報告は毎回GASに確認（端末には保存しない）
       showMain();
     };
@@ -194,6 +219,123 @@
     // ==========================================
     // ▼ GASとの通信処理 ▼
     // ==========================================
+    // ==========================================
+    // ▼ 写真ビューア ▼
+    // ==========================================
+    function viewerQuery(extra) {
+      const q = new URLSearchParams(extra);
+      q.set('u', lineUserId);
+      if (chatGroupId) q.set('g', chatGroupId);
+      return GAS_WEB_APP_URL + "?" + q.toString();
+    }
+
+    async function openViewer(v) {
+      document.getElementById('mainContainer').style.display = 'none';
+      document.getElementById('viewer').style.display = 'block';
+      const body = document.getElementById('viewerBody');
+      body.innerHTML = "⏳ 読み込み中...";
+      window.scrollTo(0, 0);
+      try {
+        const res = await fetch(viewerQuery({ action: 'getReportPhotos', v: v }));
+        const data = await res.json();
+        if (data.error) { body.innerText = "⚠️ " + data.error; return; }
+        const cases = data.cases || [];
+        if (cases.length === 0) { body.innerText = "報告が見つかりませんでした。"; return; }
+        body.innerHTML = cases.map((c, ci) =>
+          `<div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:14px; background:#fff;">
+             <div style="font-weight:bold;">${escapeHtml(c.taskName)}</div>
+             <div class="hint-text">${escapeHtml(c.date)}　状態: ${escapeHtml(c.status)}　写真: ${c.photoIds.length}枚</div>
+             ${c.summary ? `<div style="font-size:13px; margin-top:6px;">${escapeHtml(c.summary)}</div>` : ""}
+             ${c.diagnosis ? `<div style="font-size:13px; margin-top:6px; color:#4a5568;">🩺 ${escapeHtml(c.diagnosis)}</div>` : ""}
+             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+               ${c.photoIds.map((id, pi) =>
+                 `<div id="ph_${ci}_${pi}" style="text-align:center;">
+                    <div style="height:110px; display:flex; align-items:center; justify-content:center; background:#f7fafc; border-radius:6px; color:#a0aec0; font-size:12px;">⏳ ${pi + 1}枚目</div>
+                  </div>`).join("") || '<div class="hint-text">写真はありません</div>'}
+             </div>
+           </div>`).join("");
+        // 写真は1枚ずつ順番に読み込む（GAS経由のため）
+        for (let ci = 0; ci < cases.length; ci++) {
+          for (let pi = 0; pi < cases[ci].photoIds.length; pi++) {
+            await loadViewerPhoto(cases[ci], ci, pi);
+          }
+        }
+      } catch (e) {
+        body.innerText = "⚠️ 読み込みに失敗しました。通信環境を確認して、もう一度開いてください。";
+      }
+    }
+
+    async function loadViewerPhoto(c, ci, pi) {
+      const box = document.getElementById(`ph_${ci}_${pi}`);
+      if (!box) return;
+      const id = c.photoIds[pi];
+      try {
+        const res = await fetch(viewerQuery({ action: 'getPhoto', f: c.fileId, r: c.row, id: id }));
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        const src = `data:${d.mime};base64,${d.b64}`;
+        box.innerHTML = "";
+        const img = document.createElement('img');
+        img.src = src;
+        img.style.cssText = "width:100%; height:110px; object-fit:cover; border-radius:6px; border:1px solid #ddd;";
+        img.onclick = () => { document.getElementById('photoZoomImg').src = src; document.getElementById('photoZoom').style.display = 'flex'; };
+        const btn = document.createElement('button');
+        btn.innerText = "📤 トークに送る";
+        btn.style.cssText = "margin-top:4px; width:100%; padding:6px; font-size:12px; border:1px solid #06C755; background:#fff; color:#06C755; border-radius:6px;";
+        btn.onclick = () => shareViewerPhoto(btn, c, id, pi + 1);
+        box.appendChild(img); box.appendChild(btn);
+      } catch (e) {
+        box.innerHTML = `<div class="hint-text" style="padding:20px 0;">⚠️ ${pi + 1}枚目を読み込めません</div>`;
+      }
+    }
+
+    async function shareViewerPhoto(btn, c, photoId, no) {
+      if (!confirm(`「${c.taskName}」の${no}枚目の写真をトークに送りますか？\n（送った写真は、URLを知っている人が見られる共有リンクになります）`)) return;
+      btn.disabled = true; btn.innerText = "⏳ 送信中...";
+      try {
+        const res = await fetch(GAS_WEB_APP_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ action: "sharePhoto", data: { lineUserId: lineUserId, groupId: chatGroupId, chatType: chatType, fileId: c.fileId, row: c.row, photoId: photoId } })
+        });
+        const d = await res.json();
+        if (!d.success) throw new Error(d.error || "送信に失敗しました");
+        btn.innerText = "✅ 送りました";
+      } catch (e) {
+        alert("⚠️ " + e.message);
+        btn.disabled = false; btn.innerText = "📤 トークに送る";
+      }
+    }
+
+    function closeViewer() {
+      document.getElementById('viewer').style.display = 'none';
+      document.getElementById('mainContainer').style.display = 'block';
+      window.scrollTo(0, 0);
+    }
+
+    // ナレッジフォルダのファイル一覧（1つも無ければ欄ごと非表示）
+    async function fetchKnowledge() {
+      try {
+        const res = await fetch(GAS_WEB_APP_URL + "?action=getKnowledge");
+        const data = await res.json();
+        const files = (data && data.files) || [];
+        if (files.length === 0) return;
+        const box = document.getElementById('knowledgeList');
+        box.innerHTML = files.map(f =>
+          `<label style="display:flex; align-items:flex-start; gap:6px; font-size:13px; padding:4px 0; font-weight:normal;">
+             <input type="checkbox" class="kf" value="${escapeHtml(f.id)}" ${f.supported ? "" : "disabled"} style="margin-top:3px; width:auto;">
+             <span>${escapeHtml(f.name)}${f.supported ? "" : ' <span style="color:#a0aec0;">（この形式は未対応）</span>'}</span>
+           </label>`).join("");
+        document.getElementById('knowledgeBox').style.display = 'block';
+      } catch (e) {
+        console.error("ナレッジ一覧の取得エラー:", e);
+      }
+    }
+
+    function getSelectedKnowledge() {
+      return Array.from(document.querySelectorAll('#knowledgeList .kf:checked')).map(c => c.value);
+    }
+
     async function fetchTasks() {
       try {
         const response = await fetch(GAS_WEB_APP_URL + "?action=getTasks");
@@ -224,8 +366,9 @@
         activeReport = data && data.active ? data.active : null;
         // サーバー（GAS）のバージョン表示：デプロイが反映されたかの確認用
         document.getElementById('serverVer').innerText = (data && data.ver) ? `サーバー版: ${data.ver}` : "サーバー版: 旧バージョン（GASの再デプロイが必要です）";
-        // ★名簿からは引かない。この端末で前回入力した名前だけを表示する（無ければ空欄）
+        // 名簿に登録済みならその名前、無ければ空欄（LINEの表示名は候補としてplaceholderに出す）
         const nameInput = document.getElementById('reporterName');
+        // ★名簿からは引かない。この端末で前回入力した名前だけを表示する（無ければ空欄）
         let savedName = "";
         try { savedName = localStorage.getItem("reporterName:" + lineUserId) || ""; } catch (e) {}
         nameInput.value = savedName;
@@ -246,6 +389,7 @@
         document.getElementById('activeInfo').innerHTML =
           `業務: <b>${escapeHtml(activeReport.taskName)}</b><br>` +
           `開始: ${escapeHtml(activeReport.date)}　写真: ${activeReport.photoCount}枚` +
+          (activeReport.photoCount > 0 ? `　<a href="#" onclick="openViewer('${activeReport.fileId}.${activeReport.row}'); return false;">📷 写真を見る</a>` : "") +
           (activeReport.reporter === null || activeReport.reporter === undefined ? ""
             : `<br>開始した人: ${activeReport.reporter ? escapeHtml(activeReport.reporter) : '<span style="color:#a0aec0;">未入力</span>'}`);
         area.style.display = 'block';
@@ -325,6 +469,7 @@
         location: document.getElementById('location').value,
         comment: document.getElementById('comment').value,
         aiPrompt: action === 'ai' ? document.getElementById('aiPrompt').value : "",
+        knowledgeFileIds: action === 'ai' ? getSelectedKnowledge() : [],
         lineUserId: lineUserId,
         displayName: lineDisplayName,
         reporterName: reporterName,
