@@ -224,15 +224,15 @@
         activeReport = data && data.active ? data.active : null;
         // サーバー（GAS）のバージョン表示：デプロイが反映されたかの確認用
         document.getElementById('serverVer').innerText = (data && data.ver) ? `サーバー版: ${data.ver}` : "サーバー版: 旧バージョン（GASの再デプロイが必要です）";
-        // 名簿に登録済みならその名前、無ければ空欄（LINEの表示名は候補としてplaceholderに出す）
+        // ★名簿からは引かない。この端末で前回入力した名前だけを表示する（無ければ空欄）
         const nameInput = document.getElementById('reporterName');
-        if (data && data.me) {
-          nameInput.value = data.me;
-        } else {
-          nameInput.value = "";
-          if (lineDisplayName) nameInput.placeholder = `例: ${lineDisplayName}（氏名を入力）`;
-          document.getElementById('reporterHint').innerText = "※名簿に未登録です。氏名を入力してください（次回から自動表示）";
-        }
+        let savedName = "";
+        try { savedName = localStorage.getItem("reporterName:" + lineUserId) || ""; } catch (e) {}
+        nameInput.value = savedName;
+        if (!savedName && lineDisplayName) nameInput.placeholder = `例: ${lineDisplayName}（氏名を入力）`;
+        document.getElementById('reporterHint').innerText = savedName
+          ? "※この端末で前回入力した名前です。違う場合は書き換えてください"
+          : "※氏名を入力してください（この端末では次回から自動で表示されます）";
       } catch (err) {
         console.error("進行中の報告の取得に失敗:", err);
         activeReport = null;
@@ -305,6 +305,7 @@
       if (mode === 'new' && (!fileId || fileId === 'NEW')) { alert("業務を選択してください"); return; }
       const reporterName = document.getElementById('reporterName').value.trim();
       if (!reporterName) { alert("送信者（あなたの名前）を入力してください"); return; }
+      try { localStorage.setItem("reporterName:" + lineUserId, reporterName); } catch (e) {}
       const commentText = document.getElementById('comment').value.trim();
       const promptText = action === 'ai' ? document.getElementById('aiPrompt').value.trim() : "";
       if (mode === 'new' && !file) { alert("最初の報告は写真が必須です"); return; }
