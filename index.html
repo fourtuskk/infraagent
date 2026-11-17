@@ -244,7 +244,8 @@
         body.innerHTML = cases.map((c, ci) =>
           `<div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:14px; background:#fff;">
              <div style="font-weight:bold;">${escapeHtml(c.taskName)}</div>
-             <div class="hint-text">${escapeHtml(c.date)}　状態: ${escapeHtml(c.status)}　写真: ${c.photoIds.length}枚</div>
+             <div class="hint-text">シートの${c.row}行目　${escapeHtml(c.date)}　状態: ${escapeHtml(c.status)}　写真: ${c.photoIds.length}枚</div>
+             ${c.sheetUrl ? `<a href="#" style="font-size:13px;" onclick="openSheet('${escapeHtml(c.sheetUrl)}'); return false;">📄 シートを開く</a>` : ""}
              ${c.summary ? `<div style="font-size:13px; margin-top:6px;">${escapeHtml(c.summary)}</div>` : ""}
              ${c.diagnosis ? `<div style="font-size:13px; margin-top:6px; color:#4a5568;">🩺 ${escapeHtml(c.diagnosis)}</div>` : ""}
              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
@@ -283,7 +284,11 @@
         btn.innerText = "📤 トークに送る";
         btn.style.cssText = "margin-top:4px; width:100%; padding:6px; font-size:12px; border:1px solid #06C755; background:#fff; color:#06C755; border-radius:6px;";
         btn.onclick = () => shareViewerPhoto(btn, c, id, pi + 1);
-        box.appendChild(img); box.appendChild(btn);
+        const cap = document.createElement('div');
+        cap.className = "hint-text";
+        cap.style.cssText = "word-break:break-all; font-size:11px;";
+        cap.innerText = `${pi + 1}枚目　${d.name || ""}`;
+        box.appendChild(img); box.appendChild(cap); box.appendChild(btn);
       } catch (e) {
         box.innerHTML = `<div class="hint-text" style="padding:20px 0;">⚠️ ${pi + 1}枚目を読み込めません</div>`;
       }
@@ -305,6 +310,12 @@
         alert("⚠️ " + e.message);
         btn.disabled = false; btn.innerText = "📤 トークに送る";
       }
+    }
+
+    // シートはLINEの外のブラウザ（またはスプレッドシートのアプリ）で開く
+    function openSheet(url) {
+      try { if (liff.isInClient()) { liff.openWindow({ url: url, external: true }); return; } } catch (e) {}
+      window.open(url, "_blank");
     }
 
     function closeViewer() {
