@@ -85,8 +85,8 @@
     <div id="inputArea" style="display:none;">
       <div class="form-group">
         <label>👤 送信者（あなたの名前）</label>
-        <input type="text" id="reporterName" placeholder="例: 山田太郎">
-        <span class="hint-text" id="reporterHint">※初回だけ入力。次回からは自動で表示されます</span>
+        <input type="text" id="reporterName" placeholder="例: 山田太郎" autocomplete="off">
+        <span class="hint-text" id="reporterHint">※毎回、あなたの名前を入力してください</span>
       </div>
 
       <div class="form-group">
@@ -379,13 +379,11 @@
         document.getElementById('serverVer').innerText = (data && data.ver) ? `サーバー版: ${data.ver}` : "サーバー版: 旧バージョン（GASの再デプロイが必要です）";
         // 名簿に登録済みならその名前、無ければ空欄（LINEの表示名は候補としてplaceholderに出す）
         const nameInput = document.getElementById('reporterName');
-        // ★名簿からは引かない。この端末で前回入力した名前だけを表示する（無ければ空欄）
-        let savedName = "";
-        try { savedName = localStorage.getItem("reporterName:" + lineUserId) || ""; } catch (e) {}
-        nameInput.value = savedName;
-        document.getElementById('reporterHint').innerText = savedName
-          ? "※この端末で前回入力した名前です。違う場合は書き換えてください"
-          : "※氏名を入力してください（この端末では次回から自動で表示されます）";
+        // ★送信者の欄は、起動のたびに必ず空欄にする（名簿や前回の名前は表示しない）
+        nameInput.value = "";
+        nameInput.setAttribute('autocomplete', 'off');
+        try { Object.keys(localStorage).filter(k => k.indexOf("reporterName:") === 0).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+        document.getElementById('reporterHint').innerText = "※毎回、あなたの名前を入力してください";
       } catch (err) {
         console.error("進行中の報告の取得に失敗:", err);
         activeReport = null;
@@ -459,7 +457,6 @@
       if (mode === 'new' && (!fileId || fileId === 'NEW')) { alert("業務を選択してください"); return; }
       const reporterName = document.getElementById('reporterName').value.trim();
       if (!reporterName) { alert("送信者（あなたの名前）を入力してください"); return; }
-      try { localStorage.setItem("reporterName:" + lineUserId, reporterName); } catch (e) {}
       const commentText = document.getElementById('comment').value.trim();
       const promptText = action === 'ai' ? document.getElementById('aiPrompt').value.trim() : "";
       if (mode === 'new' && !file) { alert("最初の報告は写真が必須です"); return; }
